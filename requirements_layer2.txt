@@ -1,0 +1,20 @@
+# Layer 3 — Clustering & Hotspot Detection
+# Install with: pip install -r backend/requirements-layer3.txt
+# (uses loose >= pins — safe for Windows/Python 3.12)
+
+# Already installed from Layer 1
+polars>=0.20
+fastapi>=0.111
+uvicorn[standard]>=0.29
+pydantic>=2.0
+
+# New in Layer 3
+hdbscan>=0.8.33
+pyproj>=3.6
+mlflow>=2.13
+scikit-learn>=1.4     # hdbscan dependency; also used by mlflow.sklearn
+joblib>=1.4
+
+# Note: hdbscan on Windows/Python 3.12 may need:
+#   pip install hdbscan --no-build-isolation
+# If that fails, use: conda install -c conda-forge hdbscan
