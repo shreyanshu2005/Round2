@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: timescale/timescaledb-ha:pg15-latest
+    container_name: btip-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-btip}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-btip}
+      POSTGRES_DB: ${POSTGRES_DB:-btip}
+    ports:
+      - "5432:5432"
+    volumes:
+      - btip_pg_data:/home/postgres/pgdata/data
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-btip}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: btip-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - btip_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  btip_pg_data:
+  btip_redis_data:
