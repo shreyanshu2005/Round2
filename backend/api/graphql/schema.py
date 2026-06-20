@@ -1,51 +1,36 @@
 """
 backend/api/graphql/schema.py
---------------------------------
-Strawberry GraphQL schema mirroring the REST routes: hotspots, forecast,
-riskScore, recommendation. Each resolver calls the SAME underlying logic
-as its REST counterpart (no duplicated business logic) so the two APIs
-never drift apart.
-
-Mounted at /graphql in main.py via strawberry.fastapi.GraphQLRouter.
-
-Example query
--------------
-  query {
-    hotspots(limit: 5) {
-      clusterId
-      centroidLat
-      centroidLng
-      violationCount
-      persistenceScore
-    }
-  }
+Strawberry GraphQL schema for BTIP. Resolvers delegate to the same
+service-layer logic used by the REST routes (no duplicated business logic).
 """
-
 from __future__ import annotations
 
-import logging
-from datetime import date as date_type
-from typing import Optional
+from typing import List, Optional
 
 import strawberry
 
-logger = logging.getLogger(__name__)
+# NOTE: these imports point at the service-layer functions that the REST
+# routes (backend/api/routes/*.py) already call. GraphQL resolvers should
+# NEVER reimplement query logic — they call the same functions REST does.
+from backend.api.routes.hotspots import get_hotspots_data
+from backend.api.routes.forecast import get_forecast_data
+from backend.api.routes.risk import get_risk_data
+from backend.api.routes.recommendations import get_recommendations_data
 
-
-# ── GraphQL types ─────────────────────────────────────────────────────────────
 
 @strawberry.type
 class Hotspot:
-    cluster_id: str
+    cluster_id: int
     centroid_lat: float
     centroid_lng: float
     violation_count: int
     cluster_probability: float
     persistence_score: float
+    top_offence_types: List[str]
 
 
 @strawberry.type
-class ForecastPoint:
+class ConfidencePoint:
     timestamp: str
     p10: float
     p50: float
@@ -53,7 +38,14 @@ class ForecastPoint:
 
 
 @strawberry.type
-class ShapExplanationGQL:
+class Forecast:
+    junction_id: str
+    horizon: str
+    points: List[ConfidencePoint]
+
+
+@strawberry.type
+class ShapExplanation:
     feature: str
     impact: float
     direction: str
@@ -67,7 +59,7 @@ class RiskScore:
     confidence_p50: float
     confidence_p90: float
     predicted_violations: float
-    shap_explanations: list[ShapExplanationGQL]
+    shap_explanations: List[ShapExplanation]
 
 
 @strawberry.type
@@ -75,103 +67,60 @@ class Recommendation:
     zone_id: str
     n_officers: int
     risk_score: float
-    congestion_score: float
     expected_reduction_pct: float
-    confidence: str
+    confidence: float
+    shap_explanations: List[ShapExplanation]
 
-
-# ── Query root ────────────────────────────────────────────────────────────────
 
 @strawberry.type
 class Query:
     @strawberry.field
-    def hotspots(self, limit: int = 10) -> list[Hotspot]:
-        """
-        Mirrors GET /api/v1/hotspots. Calls the same DB query logic as the
-        REST route (backend/api/routes/hotspots.py) — see that module for
-        the underlying SQL.
-        """
-        try:
-            from backend.api.routes.hotspots import fetch_hotspots_sync
-            rows = fetch_hotspots_sync(limit=limit)
-            return [
-                Hotspot(
-                    cluster_id=str(r["cluster_id"]),
-                    centroid_lat=float(r["centroid_lat"]),
-                    centroid_lng=float(r["centroid_lng"]),
-                    violation_count=int(r["violation_count"]),
-                    cluster_probability=float(r.get("cluster_probability", 0.0)),
-                    persistence_score=float(r.get("persistence_score", 0.0)),
-                )
-                for r in rows
-            ]
-        except Exception as e:
-            logger.warning("GraphQL hotspots resolver failed: %s", e)
-            return []
+    async def hotspots(
+        self, bbox: Optional[str] = None, date_range: Optional[str] = None
+    ) -> List[Hotspot]:
+        rows = await get_hotspots_data(bbox=bbox, date_range=date_range)
+        return [Hotspot(**r) for r in rows]
 
     @strawberry.field
-    def forecast(self, junction_id: str, horizon: str = "24h") -> list[ForecastPoint]:
-        """Mirrors GET /api/v1/forecast?junction_id=...&horizon=..."""
-        try:
-            from backend.api.routes.forecast import fetch_forecast_sync
-            points = fetch_forecast_sync(junction_id=junction_id, horizon=horizon)
-            return [
-                ForecastPoint(timestamp=p["ts"], p10=p["p10"], p50=p["p50"], p90=p["p90"])
-                for p in points
-            ]
-        except Exception as e:
-            logger.warning("GraphQL forecast resolver failed: %s", e)
-            return []
+    async def forecast(self, junction_id: str, horizon: str = "24h") -> Forecast:
+        data = await get_forecast_data(junction_id=junction_id, horizon=horizon)
+        return Forecast(
+            junction_id=junction_id,
+            horizon=horizon,
+            points=[ConfidencePoint(**p) for p in data["points"]],
+        )
 
     @strawberry.field
-    def risk_score(self, zone_id: str, shift: str, date: str) -> Optional[RiskScore]:
-        """Mirrors GET /api/v1/risk?zone_id=...&shift=...&date=..."""
-        try:
-            from backend.api.routes.risk import fetch_risk_score_sync
-            r = fetch_risk_score_sync(zone_id=zone_id, shift=shift, date=date)
-            if r is None:
-                return None
-            return RiskScore(
+    async def risk_score(self, zone_id: str, shift: str, date: str) -> RiskScore:
+        data = await get_risk_data(zone_id=zone_id, shift=shift, date=date)
+        return RiskScore(
+            zone_id=zone_id,
+            risk_score=data["risk_score"],
+            confidence_p10=data["confidence_band"]["p10"],
+            confidence_p50=data["confidence_band"]["p50"],
+            confidence_p90=data["confidence_band"]["p90"],
+            predicted_violations=data["predicted_violations"],
+            shap_explanations=[ShapExplanation(**s) for s in data["shap_explanations"]],
+        )
+
+    @strawberry.field
+    async def recommendation(
+        self, shift: str, date: str, total_officers: int
+    ) -> List[Recommendation]:
+        rows = await get_recommendations_data(
+            shift=shift, date=date, total_officers=total_officers
+        )
+        return [
+            Recommendation(
                 zone_id=r["zone_id"],
+                n_officers=r["n_officers"],
                 risk_score=r["risk_score"],
-                confidence_p10=r["confidence_band"]["p10"],
-                confidence_p50=r["confidence_band"]["p50"],
-                confidence_p90=r["confidence_band"]["p90"],
-                predicted_violations=r["predicted_violations"],
-                shap_explanations=[
-                    ShapExplanationGQL(**s) for s in r.get("shap_explanations", [])
-                ],
+                expected_reduction_pct=r["expected_reduction_pct"],
+                confidence=r["confidence"],
+                shap_explanations=[ShapExplanation(**s) for s in r["shap_explanations"]],
             )
-        except Exception as e:
-            logger.warning("GraphQL riskScore resolver failed: %s", e)
-            return None
-
-    @strawberry.field
-    def recommendations(
-        self, shift: str, date: str, total_officers: int = 20
-    ) -> list[Recommendation]:
-        """Mirrors GET /api/v1/recommendations?shift=...&date=...&total_officers=..."""
-        try:
-            import asyncio
-            from backend.api.routes.recommendations import get_recommendations
-
-            result = asyncio.get_event_loop().run_until_complete(
-                get_recommendations(shift=shift, date=date_type.fromisoformat(date), total_officers=total_officers)
-            )
-            return [
-                Recommendation(
-                    zone_id=r.zone_id,
-                    n_officers=r.n_officers,
-                    risk_score=r.risk_score,
-                    congestion_score=r.congestion_score,
-                    expected_reduction_pct=r.expected_reduction_pct,
-                    confidence=r.confidence,
-                )
-                for r in result.recommendations
-            ]
-        except Exception as e:
-            logger.warning("GraphQL recommendations resolver failed: %s", e)
-            return []
+            for r in rows
+        ]
 
 
 schema = strawberry.Schema(query=Query)

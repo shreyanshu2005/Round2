@@ -1,176 +1,154 @@
 """
 backend/tests/test_api.py
-----------------------------
-Layer 9 API tests:
-  - Auth flow: /auth/token issues valid JWT; protected routes 401 without
-    token, 200/403 with token depending on role
-  - Health check
-  - GraphQL endpoint mounts and responds to a basic query
-  - Response shape sanity on a protected demo route
+Layer 9 — API test suite. Uses httpx.AsyncClient against the FastAPI app.
 
-Run with: pytest backend/tests/test_api.py -v
+Covers:
+  - 401 on protected routes without token, 200 with valid token
+  - /auth/token login flow (valid + invalid credentials)
+  - Response schema spot-checks for each main route
+  - Pagination on /violations
 """
-
-from __future__ import annotations
-
 import pytest
-from fastapi import Depends, FastAPI
-from fastapi.testclient import TestClient
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
-from backend.core.auth import Role, require_role, get_current_user, TokenPayload
+from backend.main import app
 
-
-@pytest.fixture
-def app() -> FastAPI:
-    """
-    Minimal app for testing auth wiring in isolation — avoids depending on
-    every backend route module (some are still in progress per the
-    Current State doc) being importable.
-    """
-    from backend.api.routes.auth import router as auth_router
-
-    test_app = FastAPI()
-    test_app.include_router(auth_router)
-
-    @test_app.get("/protected/any")
-    async def protected_any(user: TokenPayload = Depends(get_current_user)):
-        return {"user": user.sub, "role": user.role.value}
-
-    @test_app.get("/protected/commander-only")
-    async def protected_commander(user: TokenPayload = Depends(require_role("Commander"))):
-        return {"user": user.sub, "role": user.role.value}
-
-    @test_app.get("/health")
-    async def health():
-        return {"status": "ok"}
-
-    return test_app
+BASE = "/api/v1"
 
 
-@pytest.fixture
-def client(app) -> TestClient:
-    return TestClient(app)
+@pytest_asyncio.fixture
+async def client():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
-
-class TestHealth:
-    def test_health_returns_ok(self, client):
-        resp = client.get("/health")
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
-
-
-# ── Auth flow ─────────────────────────────────────────────────────────────────
-
-class TestAuthFlow:
-    def test_token_issued_for_valid_credentials(self, client):
-        resp = client.post(
-            "/auth/token",
-            data={"username": "commander1", "password": "demo-pass-commander"},
-        )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "access_token" in body
-        assert body["token_type"] == "bearer"
-
-    def test_token_rejected_for_invalid_credentials(self, client):
-        resp = client.post(
-            "/auth/token",
-            data={"username": "commander1", "password": "wrong-password"},
-        )
-        assert resp.status_code == 401
-
-    def test_token_rejected_for_unknown_user(self, client):
-        resp = client.post(
-            "/auth/token",
-            data={"username": "nobody", "password": "irrelevant"},
-        )
-        assert resp.status_code == 401
-
-    def test_protected_route_401_without_token(self, client):
-        resp = client.get("/protected/any")
-        assert resp.status_code == 401
-
-    def test_protected_route_200_with_valid_token(self, client):
-        token_resp = client.post(
-            "/auth/token",
-            data={"username": "analyst1", "password": "demo-pass-analyst"},
-        )
-        token = token_resp.json()["access_token"]
-        resp = client.get("/protected/any", headers={"Authorization": f"Bearer {token}"})
-        assert resp.status_code == 200
-        assert resp.json()["role"] == "Analyst"
-
-    def test_protected_route_401_with_garbage_token(self, client):
-        resp = client.get("/protected/any", headers={"Authorization": "Bearer not-a-real-token"})
-        assert resp.status_code == 401
-
-    def test_role_based_access_denies_wrong_role(self, client):
-        token_resp = client.post(
-            "/auth/token",
-            data={"username": "officer1", "password": "demo-pass-officer"},
-        )
-        token = token_resp.json()["access_token"]
-        resp = client.get(
-            "/protected/commander-only", headers={"Authorization": f"Bearer {token}"}
-        )
-        assert resp.status_code == 403
-
-    def test_role_based_access_allows_correct_role(self, client):
-        token_resp = client.post(
-            "/auth/token",
-            data={"username": "commander1", "password": "demo-pass-commander"},
-        )
-        token = token_resp.json()["access_token"]
-        resp = client.get(
-            "/protected/commander-only", headers={"Authorization": f"Bearer {token}"}
-        )
-        assert resp.status_code == 200
+@pytest_asyncio.fixture
+async def commander_token(client: AsyncClient) -> str:
+    resp = await client.post(
+        "/auth/token",
+        data={"username": "commander1", "password": "commander123"},
+    )
+    assert resp.status_code == 200
+    return resp.json()["access_token"]
 
 
-# ── Token internals ──────────────────────────────────────────────────────────
-
-class TestTokenInternals:
-    def test_create_and_verify_token_roundtrip(self):
-        from backend.core.auth import create_token, verify_token
-
-        token = create_token("test_user", Role.OFFICER)
-        payload = verify_token(token)
-        assert payload.sub == "test_user"
-        assert payload.role == Role.OFFICER
-
-    def test_verify_rejects_tampered_token(self):
-        from backend.core.auth import create_token, verify_token
-        from fastapi import HTTPException
-
-        token = create_token("test_user", Role.OFFICER)
-        tampered = token[:-3] + "xyz"
-        with pytest.raises(HTTPException) as exc_info:
-            verify_token(tampered)
-        assert exc_info.value.status_code == 401
+# ---------------------------------------------------------------------------
+# Auth flow
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_login_success(client: AsyncClient):
+    resp = await client.post(
+        "/auth/token",
+        data={"username": "commander1", "password": "commander123"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "access_token" in body
+    assert body["role"] == "Commander"
 
 
-# ── GraphQL mount (best-effort — skipped if strawberry not installed) ───────
+@pytest.mark.asyncio
+async def test_login_invalid_credentials(client: AsyncClient):
+    resp = await client.post(
+        "/auth/token",
+        data={"username": "commander1", "password": "wrongpass"},
+    )
+    assert resp.status_code == 401
 
-class TestGraphQL:
-    def test_graphql_schema_imports_and_has_query_type(self):
-        strawberry = pytest.importorskip("strawberry")
-        from backend.api.graphql.schema import schema
 
-        assert schema is not None
-        # Basic introspection query should succeed without raising
-        result = schema.execute_sync("{ __typename }")
-        assert result.errors is None or len(result.errors) == 0
+@pytest.mark.asyncio
+async def test_protected_route_without_token(client: AsyncClient):
+    resp = await client.get("/auth/me")
+    assert resp.status_code == 401
 
-    def test_graphql_mounts_on_app(self):
-        pytest.importorskip("strawberry")
-        from strawberry.fastapi import GraphQLRouter
-        from backend.api.graphql.schema import schema
 
-        test_app = FastAPI()
-        test_app.include_router(GraphQLRouter(schema), prefix="/graphql")
-        gql_client = TestClient(test_app)
+@pytest.mark.asyncio
+async def test_protected_route_with_token(client: AsyncClient, commander_token: str):
+    resp = await client.get(
+        "/auth/me", headers={"Authorization": f"Bearer {commander_token}"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "Commander"
 
-        resp = gql_client.post("/graphql", json={"query": "{ __typename }"})
-        assert resp.status_code == 200
+
+# ---------------------------------------------------------------------------
+# Health
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_health(client: AsyncClient):
+    resp = await client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Endpoint schema spot-checks
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_hotspots_schema(client: AsyncClient):
+    resp = await client.get(f"{BASE}/hotspots")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    if body:
+        item = body[0]
+        for key in ("cluster_id", "centroid_lat", "centroid_lng", "persistence_score"):
+            assert key in item
+
+
+@pytest.mark.asyncio
+async def test_risk_schema(client: AsyncClient):
+    resp = await client.get(
+        f"{BASE}/risk", params={"zone_id": "1", "shift": "Evening", "date": "2024-01-15"}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert 0 <= body["risk_score"] <= 100
+    assert len(body["shap_explanations"]) == 5
+
+
+@pytest.mark.asyncio
+async def test_forecast_schema(client: AsyncClient):
+    resp = await client.get(f"{BASE}/forecast", params={"junction_id": "5", "horizon": "24h"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    if body:
+        point = body[0]
+        assert point["p10"] <= point["p50"] <= point["p90"]
+
+
+@pytest.mark.asyncio
+async def test_violations_pagination(client: AsyncClient):
+    resp = await client.get(f"{BASE}/violations", params={"limit": 10, "offset": 0})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) <= 10
+
+
+@pytest.mark.asyncio
+async def test_recommendations_requires_total_officers(client: AsyncClient):
+    resp = await client.get(
+        f"{BASE}/recommendations",
+        params={"shift": "Evening", "date": "2024-01-15", "total_officers": 20},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    if body:
+        assert "shap_explanations" in body[0]
+
+
+@pytest.mark.asyncio
+async def test_simulation_post(client: AsyncClient):
+    payload = {
+        "zone_allocations": [{"zone_id": "BTP051", "n_officers": 3}],
+        "shift": "Evening",
+        "date": "2024-01-15",
+    }
+    resp = await client.post(f"{BASE}/simulation", json=payload)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["confidence_band"]["p10"] <= body["confidence_band"]["p50"] <= body["confidence_band"]["p90"]

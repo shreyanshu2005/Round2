@@ -1,72 +1,68 @@
 """
 backend/core/cache.py
-------------------------
-Lightweight Redis response cache for GET endpoints (hotspots, risk — per
-Build Guide: TTL=300s, key = f'btip:{endpoint}:{sorted(params)}').
-
-Usage (in a route module)
----------------------------
-  from backend.core.cache import cached_response
-
-  @router.get("/hotspots")
-  @cached_response(endpoint="hotspots", ttl=300)
-  async def get_hotspots(request: Request, limit: int = 10):
-      ...
-
-Degrades gracefully to no-op if `app.state.redis` is None (Redis
-unavailable) — see backend/main.py startup_redis().
+Redis caching helpers for hot GET endpoints (/hotspots, /risk).
+Uses aioredis-compatible redis.asyncio client. TTL default 300s (5 min).
 """
-
 from __future__ import annotations
 
-import functools
+import hashlib
 import json
-import logging
+from typing import Any, Optional
 
-from fastapi import Request
+import redis.asyncio as aioredis
 
-logger = logging.getLogger(__name__)
+from backend.core.config import settings
 
+_redis_client: Optional[aioredis.Redis] = None
 
-def _cache_key(endpoint: str, kwargs: dict) -> str:
-    params = {k: v for k, v in kwargs.items() if k != "request"}
-    sorted_params = ",".join(f"{k}={v}" for k, v in sorted(params.items()))
-    return f"btip:{endpoint}:{sorted_params}"
+DEFAULT_TTL_SECONDS = 300
 
 
-def cached_response(endpoint: str, ttl: int = 300):
+def get_redis() -> aioredis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = aioredis.from_url(
+            settings.REDIS_URL, encoding="utf-8", decode_responses=True
+        )
+    return _redis_client
+
+
+def make_cache_key(endpoint: str, params: dict) -> str:
+    """btip:{endpoint}:{sorted(params)} — stable hash of query params."""
+    sorted_params = json.dumps(sorted(params.items()), default=str)
+    digest = hashlib.sha256(sorted_params.encode()).hexdigest()[:16]
+    return f"btip:{endpoint}:{digest}"
+
+
+async def cache_get(key: str) -> Optional[Any]:
+    client = get_redis()
+    try:
+        raw = await client.get(key)
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception:
+        # Cache is best-effort — never break the request path on Redis failure
+        return None
+
+
+async def cache_set(key: str, value: Any, ttl: int = DEFAULT_TTL_SECONDS) -> None:
+    client = get_redis()
+    try:
+        await client.set(key, json.dumps(value, default=str), ex=ttl)
+    except Exception:
+        pass
+
+
+async def cached_endpoint(endpoint: str, params: dict, fetch_fn, ttl: int = DEFAULT_TTL_SECONDS):
     """
-    Decorator for FastAPI GET route handlers. Requires the decorated
-    function to accept a `request: Request` parameter (used to access
-    `request.app.state.redis`).
+    Generic cache-aside wrapper.
+    fetch_fn: zero-arg async callable that produces the response on a cache miss.
     """
-
-    def decorator(func):
-        @functools.wraps(func)
-        async def wrapper(request: Request, *args, **kwargs):
-            redis = getattr(request.app.state, "redis", None)
-            key = _cache_key(endpoint, kwargs)
-
-            if redis is not None:
-                try:
-                    cached = await redis.get(key)
-                    if cached is not None:
-                        logger.debug("Cache hit: %s", key)
-                        return json.loads(cached)
-                except Exception as e:
-                    logger.warning("Redis GET failed for %s — bypassing cache: %s", key, e)
-
-            result = await func(request, *args, **kwargs)
-
-            if redis is not None:
-                try:
-                    payload = result.model_dump() if hasattr(result, "model_dump") else result
-                    await redis.set(key, json.dumps(payload, default=str), ex=ttl)
-                except Exception as e:
-                    logger.warning("Redis SET failed for %s — response not cached: %s", key, e)
-
-            return result
-
-        return wrapper
-
-    return decorator
+    key = make_cache_key(endpoint, params)
+    hit = await cache_get(key)
+    if hit is not None:
+        return hit
+    result = await fetch_fn()
+    await cache_set(key, result, ttl=ttl)
+    return result

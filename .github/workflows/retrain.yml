@@ -1,0 +1,64 @@
+name: Scheduled Retrain
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"  # every Monday 03:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run training pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+        run: python scripts/train_all_models.py
+
+      - name: Compare new model MAE vs current
+        id: compare
+        run: |
+          python - <<'EOF'
+          import json, sys, os
+
+          current_path = "models/saved/current_mae.json"
+          new_path = "models/saved/latest_run_mae.json"
+
+          if not os.path.exists(current_path):
+              print("No baseline MAE found — treating new model as baseline.")
+              os.rename(new_path, current_path)
+              sys.exit(0)
+
+          with open(current_path) as f:
+              current_mae = json.load(f)["mae"]
+          with open(new_path) as f:
+              new_mae = json.load(f)["mae"]
+
+          improved = new_mae < current_mae * 0.95
+          print(f"current_mae={current_mae} new_mae={new_mae} improved={improved}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as gh_out:
+              gh_out.write(f"promote={'true' if improved else 'false'}\n")
+
+          if improved:
+              os.replace(new_path, current_path)
+          EOF
+
+      - name: Notify Slack
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"BTIP weekly retrain finished. Promote new model: ${{ steps.compare.outputs.promote }}\"}" \
+            "$SLACK_WEBHOOK_URL"
