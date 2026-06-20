@@ -118,25 +118,29 @@ def _get_recent_series(junction_id: str, lookback: int = 336) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
-# Routes
+# Core query logic (plain callables — safe for both REST and GraphQL)
 # ---------------------------------------------------------------------------
 
-@router.get("", response_model=ForecastResponse)
-async def get_forecast(
-    junction_id: str = Query(..., description="Junction identifier"),
-    horizon: Literal["24h", "7d"] = Query("24h", description="Forecast horizon: 24h or 7d"),
-):
+def _query_forecast(
+    junction_id: str,
+    horizon: Literal["24h", "7d"] = "24h",
+) -> ForecastResponse:
     """
     Return P10/P50/P90 hourly forecast for a junction.
 
     - Top-20 junctions served by LSTM (quantile regression)
     - All others served by Prophet (holiday-aware)
+
+    Plain function — no FastAPI Query() wrappers — so it can be called
+    directly from GraphQL resolvers in backend/api/graphql/schema.py as
+    well as from the REST route below.
     """
     horizon_hours = 24 if horizon == "24h" else 168
 
     try:
         top20 = _get_top20()
         use_lstm = str(junction_id) in top20
+        points_raw = None
 
         if use_lstm:
             lstm = _get_lstm()
@@ -173,18 +177,17 @@ async def get_forecast(
             status_code=503,
             detail=f"Model not trained yet: {e}. Run scripts/train_all_models.py first.",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Forecast error for junction {junction_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/risk-calendar", response_model=RiskCalendarResponse)
-async def get_risk_calendar(
-    junction_id: str = Query(..., description="Junction identifier"),
-):
+def _query_risk_calendar(junction_id: str) -> RiskCalendarResponse:
     """
     Return 7-day × 4-shift risk calendar (P50 violation count per cell).
-    Useful for risk heatmap grid on the Forecast Dashboard.
+    Plain function — safe for GraphQL resolver use.
     """
     try:
         prophet = _get_prophet()
@@ -199,16 +202,51 @@ async def get_risk_calendar(
 
     except FileNotFoundError as e:
         raise HTTPException(status_code=503, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"Risk calendar error for junction {junction_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/top-junctions")
-async def get_top_junctions():
+def _query_top_junctions() -> dict:
     """Return the list of top-20 junctions served by the LSTM model."""
     try:
         return {"top_junctions": _get_top20(), "model": "lstm"}
     except Exception as e:
         logger.exception(e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Routes — thin wrappers around the plain query functions above
+# ---------------------------------------------------------------------------
+
+@router.get("", response_model=ForecastResponse)
+async def get_forecast(
+    junction_id: str = Query(..., description="Junction identifier"),
+    horizon: Literal["24h", "7d"] = Query("24h", description="Forecast horizon: 24h or 7d"),
+):
+    return _query_forecast(junction_id=junction_id, horizon=horizon)
+
+
+@router.get("/risk-calendar", response_model=RiskCalendarResponse)
+async def get_risk_calendar(
+    junction_id: str = Query(..., description="Junction identifier"),
+):
+    return _query_risk_calendar(junction_id=junction_id)
+
+
+@router.get("/top-junctions")
+async def get_top_junctions():
+    return _query_top_junctions()
+
+
+# ---------------------------------------------------------------------------
+# Plain-callable aliases for GraphQL resolvers (backend/api/graphql/schema.py)
+# or any other internal caller that needs forecast data without going
+# through FastAPI's request/Query machinery.
+# ---------------------------------------------------------------------------
+get_forecast_data = _query_forecast
+get_risk_calendar_data = _query_risk_calendar
+get_top_junctions_data = _query_top_junctions

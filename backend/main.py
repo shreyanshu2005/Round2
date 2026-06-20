@@ -46,8 +46,8 @@ app = FastAPI(title="BTIP API", version="1.0", description="Bengaluru Traffic In
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],        # allows file://, localhost:5500, localhost:8080, etc.
+    allow_credentials=False,    # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )

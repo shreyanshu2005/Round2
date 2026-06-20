@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#d9f2ff" />
+  <meta name="description" content="BTIP — Bengaluru Traffic Intelligence Platform frontend concept." />
+  <title>BTIP — Bengaluru Traffic Intelligence Platform</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="cursor-orbit" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="topbar" id="topbar">
+    <a class="brand" href="#hero" aria-label="BTIP home">
+      <span class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </span>
+      <span class="brand-word">BTIP</span>
+      <span class="brand-sub">Bengaluru Traffic<br/>Intelligence Platform</span>
+    </a>
+
+    <nav class="nav" aria-label="Primary navigation">
+      <a href="#pulse">City pulse</a>
+      <a href="#intelligence">Intelligence</a>
+      <a href="#simulation">Simulation</a>
+      <a href="#recommendations">Action plan</a>
+    </nav>
+
+    <div class="top-actions">
+      <button class="sound-toggle" id="motionToggle" type="button" aria-pressed="false">
+        <span class="motion-dot"></span>
+        Motion on
+      </button>
+      <button class="live-pill" type="button" data-jump="#pulse">
+        <span class="live-dot"></span>
+        Live city mode
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="hero" aria-labelledby="hero-title">
+      <canvas class="hero-canvas" id="heroCanvas" aria-hidden="true"></canvas>
+      <div class="hero-skyline" aria-hidden="true"></div>
+      <div class="hero-copy">
+        <p class="eyebrow reveal">A decision system for a city that never stops moving.</p>
+        <h1 id="hero-title" class="reveal">
+          The city is<br />
+          <span class="alive-word">alive.</span>
+          <span class="hero-small">BTIP listens.</span>
+        </h1>
+        <p class="hero-intro reveal">
+          298K+ traffic records become one clear operational loop:
+          detect risk, predict pressure, test decisions and deploy smarter.
+        </p>
+        <div class="hero-cta reveal">
+          <button class="primary-cta magnetic" type="button" data-jump="#pulse">
+            Enter the live network
+            <span aria-hidden="true">↘</span>
+          </button>
+          <div class="micro-stat">
+            <strong>00:01.8</strong>
+            <span>decision refresh</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-signal-card reveal" aria-label="Current network status">
+        <div class="signal-card-top">
+          <span>NETWORK SIGNAL</span>
+          <span class="signal-time" id="signalTime">LIVE</span>
+        </div>
+        <div class="signal-score">
+          <strong id="heroRisk">72</strong>
+          <span>city risk<br/>index</span>
+        </div>
+        <div class="signal-bar"><span style="--signal:72%"></span></div>
+        <p>Peak pressure is forming across three eastern corridors.</p>
+      </div>
+
+      <div class="hero-scroll" aria-hidden="true">
+        <span>SCROLL TO FOLLOW THE SIGNAL</span>
+        <i></i>
+      </div>
+    </section>
+
+    <section class="loop-ribbon" aria-label="BTIP intelligence loop">
+      <div class="ribbon-track">
+        <span>DETECT</span><i>→</i><span>PREDICT</span><i>→</i><span>SCORE</span><i>→</i>
+        <span>RECOMMEND</span><i>→</i><span>SIMULATE</span><i>→</i><span>ACT</span><i>→</i><span>RE-LEARN</span><i>↗</i>
+        <span>DETECT</span><i>→</i><span>PREDICT</span><i>→</i><span>SCORE</span><i>→</i>
+        <span>RECOMMEND</span><i>→</i><span>SIMULATE</span><i>→</i><span>ACT</span><i>→</i><span>RE-LEARN</span><i>↗</i>
+      </div>
+    </section>
+
+    <section class="pulse-section section-pad" id="pulse">
+      <div class="section-head reveal">
+        <p class="section-kicker">01 / CITY PULSE</p>
+        <h2>See pressure<br/>before it becomes chaos.</h2>
+        <p>Not another dashboard full of charts. This is a living operational picture that converts movement into decisions.</p>
+      </div>
+
+      <div class="pulse-grid">
+        <article class="network-stage reveal" id="networkStage">
+          <canvas id="networkCanvas" aria-label="Animated traffic network visualization"></canvas>
+          <div class="network-overlay top-left">
+            <span>FRIDAY · 18:40</span>
+            <strong>East Bengaluru</strong>
+          </div>
+          <div class="network-overlay bottom-left">
+            <button class="layer-chip is-active" data-layer="risk">Risk</button>
+            <button class="layer-chip" data-layer="violations">Violations</button>
+            <button class="layer-chip" data-layer="flow">Traffic flow</button>
+          </div>
+          <div class="network-legend">
+            <span><i class="legend-low"></i>stable</span>
+            <span><i class="legend-mid"></i>watch</span>
+            <span><i class="legend-high"></i>critical</span>
+          </div>
+          <button class="map-focus-card" type="button" id="mapFocusCard">
+            <small>CRITICAL CORRIDOR</small>
+            <strong>Silk Board → Bellandur</strong>
+            <span>Risk rising 18% in 35 min <b>↗</b></span>
+          </button>
+        </article>
+
+        <aside class="pulse-rail reveal">
+          <div class="rail-topline">
+            <span>LIVE METRICS</span>
+            <span class="blink">●</span>
+          </div>
+          <div class="metric-block metric-main">
+            <span>city-wide risk</span>
+            <strong><em id="cityRiskMetric">72</em><small>/100</small></strong>
+            <div class="metric-trend">+8.4% <span>vs previous hour</span></div>
+          </div>
+          <div class="metric-pair">
+            <div>
+              <span>active hotspots</span>
+              <strong id="hotspotMetric">42</strong>
+            </div>
+            <div>
+              <span>structural</span>
+              <strong>17</strong>
+            </div>
+          </div>
+          <div class="metric-block">
+            <span>highest pressure</span>
+            <strong class="metric-place">Silk Board</strong>
+            <div class="meter"><span style="--value:88%"></span></div>
+          </div>
+          <div class="human-note">
+            <span class="human-icon">◎</span>
+            <p><b>In plain language:</b> congestion is likely to intensify because rush-hour volume and repeat violations are overlapping.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="intelligence-section" id="intelligence">
+      <div class="terrain" aria-hidden="true">
+        <span class="terrain-line line-a"></span>
+        <span class="terrain-line line-b"></span>
+        <span class="terrain-line line-c"></span>
+      </div>
+      <div class="section-pad intelligence-inner">
+        <div class="section-head split reveal">
+          <div>
+            <p class="section-kicker">02 / DECISION INTELLIGENCE</p>
+            <h2>From raw signals<br/>to human decisions.</h2>
+          </div>
+          <p>The model can be complex. The interface should not be. Every prediction is translated into a reason, a confidence level and a recommended next move.</p>
+        </div>
+
+        <div class="intelligence-cards">
+          <article class="int-card int-card-primary reveal tilt-card">
+            <div class="card-index">A</div>
+            <div class="card-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
+            <div class="int-card-copy">
+              <small>PREDICTED PRESSURE</small>
+              <strong>86</strong>
+              <p>Bellandur · Evening shift</p>
+            </div>
+            <div class="confidence-pill">91% confidence</div>
+          </article>
+
+          <article class="int-card reveal tilt-card">
+            <div class="card-index">B</div>
+            <small>WHY THIS ZONE?</small>
+            <ul class="reason-list">
+              <li><span>Rush hour overlap</span><b>+18</b></li>
+              <li><span>7-day repeat pattern</span><b>+14</b></li>
+              <li><span>Network centrality</span><b>+11</b></li>
+            </ul>
+            <button class="text-button" type="button">Open full explanation ↗</button>
+          </article>
+
+          <article class="int-card reveal tilt-card">
+            <div class="card-index">C</div>
+            <small>24-HOUR FORECAST</small>
+            <svg class="forecast-spark" viewBox="0 0 320 150" role="img" aria-label="Risk forecast chart">
+              <defs>
+                <linearGradient id="areaFill" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stop-color="#ff6b45" stop-opacity=".45"/>
+                  <stop offset="100%" stop-color="#ff6b45" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <path class="forecast-area" d="M0,120 C40,118 55,88 88,92 C120,98 135,48 170,58 C205,67 215,22 250,40 C279,56 298,25 320,18 L320,150 L0,150Z" fill="url(#areaFill)"/>
+              <path class="forecast-line" d="M0,120 C40,118 55,88 88,92 C120,98 135,48 170,58 C205,67 215,22 250,40 C279,56 298,25 320,18" fill="none"/>
+            </svg>
+            <div class="forecast-axis"><span>NOW</span><span>+6H</span><span>+12H</span><span>+24H</span></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="simulation-section section-pad" id="simulation">
+      <div class="section-head reveal">
+        <p class="section-kicker">03 / DIGITAL TWIN</p>
+        <h2>Test the decision<br/>before the city feels it.</h2>
+        <p>Adjust deployment, shift and focus zone. The digital twin estimates direct deterrence, downstream congestion relief and confidence.</p>
+      </div>
+
+      <div class="sim-shell reveal">
+        <div class="sim-controls">
+          <div class="control-label">
+            <span>OFFICERS TO DEPLOY</span>
+            <strong id="officerValue">20</strong>
+          </div>
+          <input id="officerRange" type="range" min="4" max="50" value="20" aria-label="Officers to deploy" />
+
+          <label class="select-wrap">
+            <span>FOCUS ZONE</span>
+            <select id="zoneSelect">
+              <option value="silk">Silk Board Corridor</option>
+              <option value="bellandur">Bellandur Junction</option>
+              <option value="hebbal">Hebbal Flyover</option>
+              <option value="tin">Tin Factory</option>
+            </select>
+          </label>
+
+          <div class="shift-control" role="group" aria-label="Shift selection">
+            <button type="button" data-shift="Morning">Morning</button>
+            <button type="button" data-shift="Afternoon">Afternoon</button>
+            <button type="button" class="is-active" data-shift="Evening">Evening</button>
+            <button type="button" data-shift="Night">Night</button>
+          </div>
+
+          <button id="runSimulation" class="run-sim magnetic" type="button">
+            <span>RUN SCENARIO</span>
+            <b>↗</b>
+          </button>
+        </div>
+
+        <div class="sim-visual">
+          <div class="sim-map before-map">
+            <div class="map-label"><span>BEFORE</span><strong id="beforeRisk">86</strong></div>
+            <div class="road-field" aria-hidden="true"></div>
+            <div class="hotspot hotspot-one"></div>
+            <div class="hotspot hotspot-two"></div>
+            <div class="hotspot hotspot-three"></div>
+          </div>
+          <div class="sim-map after-map" id="afterMap">
+            <div class="map-label"><span>AFTER</span><strong id="afterRisk">54</strong></div>
+            <div class="road-field" aria-hidden="true"></div>
+            <div class="relief-ring ring-one"></div>
+            <div class="relief-ring ring-two"></div>
+          </div>
+          <button class="compare-handle" id="compareHandle" type="button" aria-label="Drag to compare before and after">
+            <span>↔</span>
+          </button>
+        </div>
+
+        <div class="sim-results">
+          <div class="result-card">
+            <span>PROJECTED REDUCTION</span>
+            <strong><em id="reductionValue">18.6</em>%</strong>
+            <small>violations in 4h window</small>
+          </div>
+          <div class="result-card">
+            <span>CONGESTION RELIEF</span>
+            <strong><em id="reliefValue">12.4</em>%</strong>
+            <small>including nearby junctions</small>
+          </div>
+          <div class="result-card">
+            <span>AFFECTED JUNCTIONS</span>
+            <strong><em id="junctionValue">14</em></strong>
+            <small>direct + spillover impact</small>
+          </div>
+          <div class="confidence-strip">
+            <div><span>P10</span><b id="p10Value">14.2%</b></div>
+            <div class="median"><span>P50</span><b id="p50Value">18.6%</b></div>
+            <div><span>P90</span><b id="p90Value">23.1%</b></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="recommendations-section" id="recommendations">
+      <div class="section-pad">
+        <div class="section-head split reveal">
+          <div>
+            <p class="section-kicker">04 / ACTION PLAN</p>
+            <h2>A plan people<br/>can trust and use.</h2>
+          </div>
+          <p>Every allocation is ranked, explained and ready to hand to an operations team—not buried inside model output.</p>
+        </div>
+
+        <div class="recommendation-layout">
+          <div class="deployment-orbit reveal" aria-label="Animated deployment visualization">
+            <div class="orbit-center">
+              <small>20 OFFICERS</small>
+              <strong>6 zones</strong>
+              <span>optimal allocation</span>
+            </div>
+            <button class="orbit-node node-one" type="button"><b>5</b><span>Silk Board</span></button>
+            <button class="orbit-node node-two" type="button"><b>4</b><span>Bellandur</span></button>
+            <button class="orbit-node node-three" type="button"><b>4</b><span>Hebbal</span></button>
+            <button class="orbit-node node-four" type="button"><b>3</b><span>Tin Factory</span></button>
+            <button class="orbit-node node-five" type="button"><b>2</b><span>KR Puram</span></button>
+            <button class="orbit-node node-six" type="button"><b>2</b><span>Marathahalli</span></button>
+          </div>
+
+          <div class="recommendation-stack reveal">
+            <article class="recommendation-card featured">
+              <div class="rec-rank">01</div>
+              <div class="rec-main">
+                <small>HIGHEST PRIORITY</small>
+                <h3>Silk Board Corridor</h3>
+                <p>Deploy 5 officers between 17:30–21:30.</p>
+              </div>
+              <div class="rec-impact"><span>expected risk</span><strong>88 → 52</strong></div>
+              <button class="rec-expand" type="button" aria-expanded="false">Why this zone? <span>+</span></button>
+              <div class="rec-detail">
+                <p>Repeat offences, rush-hour demand and network centrality combine to make this the strongest intervention point.</p>
+              </div>
+            </article>
+
+            <article class="recommendation-card">
+              <div class="rec-rank">02</div>
+              <div class="rec-main"><small>HIGH PRIORITY</small><h3>Bellandur Junction</h3><p>Deploy 4 officers with mobile patrol support.</p></div>
+              <div class="rec-impact"><span>expected risk</span><strong>84 → 58</strong></div>
+              <button class="rec-expand" type="button" aria-expanded="false">Why this zone? <span>+</span></button>
+              <div class="rec-detail"><p>High persistence and spillover potential mean one intervention can influence multiple adjacent junctions.</p></div>
+            </article>
+
+            <article class="recommendation-card">
+              <div class="rec-rank">03</div>
+              <div class="rec-main"><small>NETWORK PRIORITY</small><h3>Hebbal Flyover</h3><p>Deploy 4 officers and watch northbound flow.</p></div>
+              <div class="rec-impact"><span>expected risk</span><strong>79 → 61</strong></div>
+              <button class="rec-expand" type="button" aria-expanded="false">Why this zone? <span>+</span></button>
+              <div class="rec-detail"><p>Its structural importance is higher than its raw violation count, making it a hidden leverage point.</p></div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="closing-section">
+      <canvas id="closingCanvas" aria-hidden="true"></canvas>
+      <div class="closing-copy reveal">
+        <p>BUILT FOR BENGALURU. DESIGNED FOR DECISIONS.</p>
+        <h2>Less reaction.<br/><span>More anticipation.</span></h2>
+        <button class="primary-cta closing-cta magnetic" type="button" data-jump="#hero">Return to the city pulse ↑</button>
+      </div>
+      <div class="closing-data">
+        <span>HDBSCAN</span><span>LIGHTGBM</span><span>LSTM</span><span>GRAPH INTELLIGENCE</span><span>ILP + PPO</span><span>DIGITAL TWIN</span>
+      </div>
+    </section>
+  </main>
+
+  <div class="demo-toast" id="demoToast" role="status" aria-live="polite">
+    <span class="toast-dot"></span>
+    <p><b>Connecting…</b> — attempting to reach backend at localhost:8000.</p>
+    <button type="button" id="closeToast" aria-label="Close notification">×</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

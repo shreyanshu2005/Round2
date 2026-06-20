@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parents[3]
-FEATURE_STORE = BASE_DIR / "data" / "processed" / "feature_store.parquet"
+FEATURE_STORE = BASE_DIR / "data" / "processed" / "clustered_feature_store.parquet"
 PERSISTENCE_PATH = BASE_DIR / "data" / "processed" / "cluster_persistence.parquet"
 
 
@@ -133,16 +133,21 @@ def _hotspot_type(score: float) -> str:
     return "transient"
 
 
-# ── Route ─────────────────────────────────────────────────────────────────────
+# ── Core query logic (plain callable — safe for both REST and GraphQL) ────────
 
-@router.get("/hotspots", response_model=list[HotspotResponse])
-def get_hotspots(
-    bbox: Optional[str] = Query(None, description="lat_min,lng_min,lat_max,lng_max"),
-    date_from: Optional[date] = Query(None),
-    date_to: Optional[date] = Query(None),
-    min_persistence: float = Query(0.0, ge=0.0, le=1.0),
-    limit: int = Query(50, ge=1, le=500),
-):
+def _query_hotspots(
+    bbox: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    min_persistence: float = 0.0,
+    limit: int = 50,
+) -> list[HotspotResponse]:
+    """
+    Shared hotspot query logic. No FastAPI Query() wrappers — plain Python
+    defaults only, so this can be called directly (e.g. from GraphQL
+    resolvers in backend/api/graphql/schema.py) as well as from the REST
+    route below.
+    """
     df = _load_clustered_data(bbox, date_from, date_to)
 
     # Load persistence scores and join if available
@@ -191,3 +196,28 @@ def get_hotspots(
         ))
 
     return results
+
+
+# ── Route ─────────────────────────────────────────────────────────────────────
+
+@router.get("/hotspots", response_model=list[HotspotResponse])
+def get_hotspots(
+    bbox: Optional[str] = Query(None, description="lat_min,lng_min,lat_max,lng_max"),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    min_persistence: float = Query(0.0, ge=0.0, le=1.0),
+    limit: int = Query(50, ge=1, le=500),
+):
+    return _query_hotspots(
+        bbox=bbox,
+        date_from=date_from,
+        date_to=date_to,
+        min_persistence=min_persistence,
+        limit=limit,
+    )
+
+
+# Plain-callable alias for GraphQL resolvers (backend/api/graphql/schema.py)
+# or any other internal caller that needs hotspot data without going through
+# FastAPI's request/Query machinery.
+get_hotspots_data = _query_hotspots

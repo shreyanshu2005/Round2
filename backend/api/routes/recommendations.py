@@ -166,17 +166,20 @@ def _get_congestion_scores() -> dict[str, float]:
     return opt._load_congestion_scores()
 
 
-# ── Route ─────────────────────────────────────────────────────────────────────
+# ── Core query logic (plain callable — safe for both REST and GraphQL) ────────
 
-@router.get("", response_model=RecommendationsResponse)
-async def get_recommendations(
-    shift: str = Query(..., description="Morning | Afternoon | Evening | Night"),
-    date: date_type = Query(..., description="YYYY-MM-DD"),
-    total_officers: int = Query(20, ge=1, le=MAX_TOTAL_OFFICERS),
+def _query_recommendations(
+    shift: str,
+    date: date_type,
+    total_officers: int = 20,
 ) -> RecommendationsResponse:
     """
     Two-stage patrol recommendation: ILP primary allocation + optional RL
     advisory delta + per-zone SHAP explanations from the Layer 4 risk model.
+
+    Plain function — no FastAPI Query() wrappers — so it can be called
+    directly (e.g. from GraphQL resolvers in backend/api/graphql/schema.py)
+    as well as from the REST route below.
     """
     # 1. Risk scores + SHAP (Layer 4)
     try:
@@ -186,6 +189,8 @@ async def get_recommendations(
             status_code=503,
             detail=f"Risk model not trained yet (Layer 4 incomplete): {e}",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Failed to fetch risk scores for recommendations")
         raise HTTPException(status_code=500, detail=f"Risk scoring failed: {e}")
@@ -245,3 +250,20 @@ async def get_recommendations(
         rl_available=rl_available,
         recommendations=items,
     )
+
+
+# ── Route ─────────────────────────────────────────────────────────────────────
+
+@router.get("", response_model=RecommendationsResponse)
+async def get_recommendations(
+    shift: str = Query(..., description="Morning | Afternoon | Evening | Night"),
+    date: date_type = Query(..., description="YYYY-MM-DD"),
+    total_officers: int = Query(20, ge=1, le=MAX_TOTAL_OFFICERS),
+) -> RecommendationsResponse:
+    return _query_recommendations(shift=shift, date=date, total_officers=total_officers)
+
+
+# Plain-callable alias for GraphQL resolvers (backend/api/graphql/schema.py)
+# or any other internal caller that needs recommendation data without going
+# through FastAPI's request/Query machinery.
+get_recommendations_data = _query_recommendations

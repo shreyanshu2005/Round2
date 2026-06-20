@@ -173,14 +173,19 @@ def _build_feature_row(
     })
 
 
-# ── Route ──────────────────────────────────────────────────────────────────
+# ── Core query logic (plain callable — safe for both REST and GraphQL) ────
 
-@router.get("", response_model=RiskResponse)
-def get_risk(
-    zone_id: int = Query(..., description="HDBSCAN cluster_id from Layer 3"),
-    shift: str = Query(..., description="Morning | Afternoon | Evening | Night"),
-    date: date_cls = Query(..., description="YYYY-MM-DD"),
+def _query_risk(
+    zone_id: int,
+    shift: str,
+    date: date_cls,
 ) -> RiskResponse:
+    """
+    Shared risk-scoring logic. No FastAPI Query() wrappers — plain Python
+    arguments only, so this can be called directly (e.g. from GraphQL
+    resolvers in backend/api/graphql/schema.py) as well as from the REST
+    route below.
+    """
     if shift not in SHIFT_HOUR_MAP:
         raise HTTPException(
             status_code=422,
@@ -236,3 +241,20 @@ def get_risk(
         model_spread=round(spread, 2),
         shap_explanations=[ShapExplanationOut(**s) for s in shap_items],
     )
+
+
+# ── Route ──────────────────────────────────────────────────────────────────
+
+@router.get("", response_model=RiskResponse)
+def get_risk(
+    zone_id: int = Query(..., description="HDBSCAN cluster_id from Layer 3"),
+    shift: str = Query(..., description="Morning | Afternoon | Evening | Night"),
+    date: date_cls = Query(..., description="YYYY-MM-DD"),
+) -> RiskResponse:
+    return _query_risk(zone_id=zone_id, shift=shift, date=date)
+
+
+# Plain-callable alias for GraphQL resolvers (backend/api/graphql/schema.py)
+# or any other internal caller that needs risk data without going through
+# FastAPI's request/Query machinery.
+get_risk_data = _query_risk

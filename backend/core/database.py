@@ -17,6 +17,13 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 Base = declarative_base()
 
 
+def get_engine():
+    """Callable accessor for the module-level engine — some callers (e.g.
+    GraphQL schema setup, scripts that import lazily to avoid connecting
+    at import time) expect a function rather than a bare variable."""
+    return engine
+
+
 @contextmanager
 def get_session():
     """Context-managed DB session: `with get_session() as session: ...`"""
