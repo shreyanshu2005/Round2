@@ -48,10 +48,10 @@ OUTPUT_PATH = REPO_ROOT / "data" / "processed" / "junction_congestion_scores.par
 
 # ── Weights (must sum to 1.0) ──────────────────────────────────────────────────
 WEIGHTS = {
-    "betweenness": 0.35,
-    "violation_density": 0.30,
-    "rolling_7d": 0.20,
-    "rush_hour": 0.15,
+    "betweenness": 0.20,       # reduced: prevents low-violation high-centrality nodes dominating
+    "violation_density": 0.45,  # increased: violation count is the primary signal
+    "rolling_7d": 0.25,         # increased: recent trend matters more than structure
+    "rush_hour": 0.10,          # reduced slightly
 }
 
 # ── Rush-hour hours ────────────────────────────────────────────────────────────
@@ -175,18 +175,24 @@ class CongestionScorer:
         agg = self._aggregate_junctions(fs)
 
         # ── Join centrality ────────────────────────────────────────────────────
-        # centrality.node_id is an OSM node ID (string).
-        # agg.junction_id is either a snapped junction string ID or a name.
-        # We do a LEFT JOIN; unmatched rows get betweenness = 0 (peripheral).
+        # junction_id_snapped has an "OSM_" prefix (e.g. "OSM_11896408351").
+        # centrality.node_id is the raw OSM integer string (e.g. "11896408351").
+        # Strip the prefix so they match. Non-OSM IDs (e.g. "BTP044") won't
+        # match and correctly get betweenness = 0 (not in the road graph).
+        agg = agg.with_columns(
+            pl.col("junction_id")
+            .str.strip_prefix("OSM_")
+            .alias("junction_osm_id")
+        )
         merged = agg.join(
             centrality.select(["node_id", "betweenness_norm", "closeness_norm"]),
-            left_on="junction_id",
+            left_on="junction_osm_id",
             right_on="node_id",
             how="left",
         ).with_columns(
             pl.col("betweenness_norm").fill_null(0.0),
             pl.col("closeness_norm").fill_null(0.0),
-        )
+        ).drop("junction_osm_id")
 
         # ── Normalise each component independently ─────────────────────────────
         merged = merged.with_columns(

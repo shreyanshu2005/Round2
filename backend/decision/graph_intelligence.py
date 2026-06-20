@@ -5,7 +5,7 @@ Loads the Bengaluru OSM road network graph and computes structural centrality
 metrics for every junction node.
 
 Centrality metrics computed:
-  - betweenness_centrality  (k=500 approximation, weight='length')
+  - betweenness_centrality  (k=50 approximation, weight='length')
   - closeness_centrality    (used as secondary diffusion signal)
 
 Results cached to:  data/processed/junction_centrality.parquet
@@ -121,7 +121,9 @@ class GraphIntelligence:
     def compute_closeness(self) -> dict[str, float]:
         """
         Closeness centrality — average reciprocal distance to all other nodes.
-        Exact computation on largest connected component only (fast enough).
+        Exact computation on largest connected component only (fast enough on
+        small/medium graphs). On large graphs (100K+ nodes) this is O(n*m) and
+        can take tens of hours — use compute_closeness_approx() instead.
         """
         assert self.G is not None, "Call load_graph() first."
         logger.info("Computing closeness centrality …")
@@ -139,12 +141,106 @@ class GraphIntelligence:
         logger.info("Closeness centrality computed for %d nodes.", len(full_cc))
         return full_cc
 
+    def compute_closeness_approx(self, n_landmarks: int = 200, seed: int = 42) -> dict[str, float]:
+        """
+        Landmark-sampling approximation of closeness centrality.
+
+        Exact closeness requires a full Dijkstra run FROM every node (O(n*m)
+        total), which is infeasible on graphs with 100K+ nodes. Instead, this
+        picks `n_landmarks` random nodes and runs Dijkstra FROM each of them —
+        which is exactly the same primitive, just reused n_landmarks times
+        instead of n times. Since distances are symmetric in an undirected
+        graph, the distance from landmark L to node V equals the distance from
+        V to L, so each landmark run gives us one "sample" of every node's
+        distance profile.
+
+        For each node, closeness ≈ 1 / (mean distance to the sampled
+        landmarks) — an unbiased estimator of true closeness (which is
+        1 / mean distance to ALL other nodes) whose variance shrinks as
+        n_landmarks grows. This is the standard approach for approximating
+        closeness centrality on large networks.
+
+        Parameters
+        ----------
+        n_landmarks : int
+            Number of random landmark nodes to sample. More landmarks = more
+            accurate but slower (cost scales linearly: ~1 Dijkstra run per
+            landmark, same cost as one node's worth of exact closeness work).
+        seed : int
+            RNG seed for reproducible landmark selection.
+        """
+        assert self.G is not None, "Call load_graph() first."
+        logger.info("Computing approximate closeness centrality (n_landmarks=%d) …", n_landmarks)
+
+        # Restrict to largest connected component, same as the exact method,
+        # so distances are always finite.
+        lcc = max(nx.connected_components(self.G), key=len)
+        G_lcc = self.G.subgraph(lcc).copy()
+        lcc_nodes = list(G_lcc.nodes())
+
+        rng = np.random.default_rng(seed)
+        n_landmarks = min(n_landmarks, len(lcc_nodes))
+        landmark_idx = rng.choice(len(lcc_nodes), size=n_landmarks, replace=False)
+        landmarks = [lcc_nodes[i] for i in landmark_idx]
+
+        # Running sum + count of distances per node, across all landmark runs.
+        dist_sum: dict[str, float] = {n: 0.0 for n in lcc_nodes}
+        dist_count: dict[str, int] = {n: 0 for n in lcc_nodes}
+
+        for i, landmark in enumerate(landmarks, 1):
+            lengths = nx.single_source_dijkstra_path_length(G_lcc, landmark, weight="length")
+            for node, d in lengths.items():
+                if node == landmark:
+                    continue  # exclude self-distance (0.0) — not meaningful for closeness
+                dist_sum[node] += d
+                dist_count[node] += 1
+            if i % 50 == 0 or i == n_landmarks:
+                logger.info("  landmark %d/%d done", i, n_landmarks)
+
+        approx_cc: dict[str, float] = {}
+        for node in lcc_nodes:
+            cnt = dist_count[node]
+            if cnt == 0:
+                approx_cc[node] = 0.0
+            else:
+                mean_dist = dist_sum[node] / cnt
+                approx_cc[node] = 1.0 / mean_dist if mean_dist > 0 else 0.0
+
+        # Nodes NOT in LCC get score 0.0
+        full_cc: dict[str, float] = {n: 0.0 for n in self.G.nodes()}
+        full_cc.update(approx_cc)
+
+        logger.info("Approximate closeness centrality computed for %d nodes (%d landmarks).",
+                    len(full_cc), n_landmarks)
+        return full_cc
+
     # ── Build / cache ──────────────────────────────────────────────────────────
 
-    def build(self, k_betweenness: int = 500, force_recompute: bool = False) -> pl.DataFrame:
+    def build(
+        self,
+        k_betweenness: int = 500,
+        force_recompute: bool = False,
+        use_approx_closeness: bool = True,
+        closeness_landmarks: int = 200,
+    ) -> pl.DataFrame:
         """
         Main entry point. If cache exists and force_recompute=False, loads from
         parquet. Otherwise computes centrality and writes cache.
+
+        Parameters
+        ----------
+        k_betweenness : int
+            Pivot count for approximate betweenness centrality.
+        force_recompute : bool
+            Recompute even if a cache file already exists.
+        use_approx_closeness : bool
+            If True (default), use landmark-sampling approximate closeness
+            (compute_closeness_approx) — required for large graphs (100K+
+            nodes) where exact closeness would take tens of hours. Set False
+            only for small/medium graphs where exact closeness is fast.
+        closeness_landmarks : int
+            Number of landmark nodes for approximate closeness. Only used
+            when use_approx_closeness=True.
 
         Returns
         -------
@@ -162,7 +258,10 @@ class GraphIntelligence:
             self.load_graph()
 
         bc = self.compute_betweenness(k=k_betweenness)
-        cc = self.compute_closeness()
+        if use_approx_closeness:
+            cc = self.compute_closeness_approx(n_landmarks=closeness_landmarks)
+        else:
+            cc = self.compute_closeness()
 
         node_ids = list(self.G.nodes())
         bc_vals = np.array([bc.get(n, 0.0) for n in node_ids], dtype=np.float32)
@@ -272,7 +371,7 @@ if __name__ == "__main__":
 
     gi = GraphIntelligence()
     gi.load_graph()
-    df = gi.build(k_betweenness=500, force_recompute=False)
+    df = gi.build(k_betweenness=50, force_recompute=False)
 
     print("\n── Centrality summary ──────────────────────────────────")
     print(df.describe())
